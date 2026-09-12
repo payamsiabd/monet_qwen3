@@ -143,19 +143,27 @@ run inside an NGC PyTorch apptainer image
   N GPUs on every node, so it tops out at 2+2=4 GPUs here. Getting the full
   2+3=5 needs a **SLURM heterogeneous job** — each script has two
   `#SBATCH`/`#SBATCH hetjob`-separated resource blocks (one per node's GPU
-  count), and launches `torchrun` on each side via `srun --het-group=<i>`,
-  both pointing at the same c10d rendezvous endpoint so they join one
-  process group.
-- Install Python deps *inside* the container with
-  `requirements-container.txt` (this repo's `requirements.txt` minus
-  `torch`/`torchvision`, which the NGC image already bundles matched to its
-  own CUDA/driver — reinstalling them from PyPI inside the container risks
-  breaking GPU support):
+  count), and launches torch's distributed runner on each side via
+  `srun --het-group=<i>`, both pointing at the same c10d rendezvous endpoint
+  so they join one process group.
+- **Environment**: one isolated virtualenv, built *inside* the container so
+  it inherits the container's own CUDA-matched `torch`/`torchvision` (via
+  `python -m venv --system-site-packages`) without touching the container
+  itself (read-only anyway) or `$HOME` (no `pip install --user`). Build it
+  once — this needs PyPI access, which most SLURM clusters only give
+  login/data-transfer nodes, not compute nodes, so run it directly rather
+  than through `sbatch`:
   ```bash
-  apptainer exec --nv /projects/academic/alipour/payamabd/pytorch_ngc_25.02.sif \
-    pip install --user -r requirements-container.txt
+  bash script_examples/setup_env.sh
   ```
-- Each script's header comment explains the resource requests, the
+  This installs the single `requirements.txt` (unchanged, still includes
+  bare `torch`/`torchvision`) into the venv; since those two are unpinned
+  and already importable via the container's system site-packages, pip
+  leaves them alone and only installs what's actually missing
+  (`transformers`, `trl`, `deepspeed`, ...) — see `script_examples/
+  cluster_env.sh` for the shared config (container path, venv location,
+  bind mounts) both `setup_env.sh` and the three stage scripts source.
+- Each stage script's header comment explains the resource requests, the
   `--nodelist` override if you want to pin the exact nodes from `scontrol
   show node` rather than let SLURM pick any node with matching GRES in the
   `alipour` partition, and the `NCCL_SOCKET_IFNAME`/`NCCL_DEBUG` knobs to set

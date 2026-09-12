@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-apptainer/
 *.egg-info/
 logs/
 log.txt
