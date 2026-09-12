@@ -127,6 +127,44 @@ pip install -r requirements.txt
    order (Stage 2 and Stage 3 each first precompute teacher representations/latents,
    then train).
 
+## SLURM + apptainer (multi-node) setup
+
+`script_examples/sft_stage{1,2,3}.sh` are `sbatch`-submittable directly
+(`sbatch script_examples/sft_stage1.sh`, etc.) and are set up for a specific
+asymmetric two-node cluster: 5 total L40S GPUs split 2 + 3 across two nodes,
+run inside an NGC PyTorch apptainer image
+(`/projects/academic/alipour/payamabd/pytorch_ngc_25.02.sif`).
+
+- A plain `sbatch --nodes=2 --gres=gpu:...:N` job can only request the *same*
+  N GPUs on every node, so it tops out at 2+2=4 GPUs here. Getting the full
+  2+3=5 needs a **SLURM heterogeneous job** — each script has two
+  `#SBATCH`/`#SBATCH hetjob`-separated resource blocks (one per node's GPU
+  count), and launches `torchrun` on each side via `srun --het-group=<i>`,
+  both pointing at the same c10d rendezvous endpoint so they join one
+  process group.
+- Install Python deps *inside* the container with
+  `requirements-container.txt` (this repo's `requirements.txt` minus
+  `torch`/`torchvision`, which the NGC image already bundles matched to its
+  own CUDA/driver — reinstalling them from PyPI inside the container risks
+  breaking GPU support):
+  ```bash
+  apptainer exec --nv /projects/academic/alipour/payamabd/pytorch_ngc_25.02.sif \
+    pip install --user -r requirements-container.txt
+  ```
+- Each script's header comment explains the resource requests, the
+  `--nodelist` override if you want to pin the exact nodes from `scontrol
+  show node` rather than let SLURM pick any node with matching GRES in the
+  `alipour` partition, and the `NCCL_SOCKET_IFNAME`/`NCCL_DEBUG` knobs to set
+  if the job hangs at rendezvous (by far the most common first failure on a
+  new multi-node setup — it's almost always NCCL picking the wrong network
+  interface between nodes).
+- **These sbatch scripts were written and reviewed but not run** — this
+  environment has no SLURM/GPU/apptainer access. Treat the resource requests
+  (CPUs/memory per node) as reasonable starting points based on the
+  `scontrol show node` snapshot at the time, not tuned numbers; adjust with
+  `squeue`/`sinfo` for current load, and expect to iterate on the NCCL/
+  rendezvous settings once you have real multi-node logs to look at.
+
 See `monet_qwen_model/modeling_qwen3_vl_monet.py`'s module docstring-style comments and
 `Qwen3VLModel.forward`/`Qwen3VLForConditionalGeneration.forward` for the implementation
 of the forward process with latent embeddings (mirroring the original repo's README
