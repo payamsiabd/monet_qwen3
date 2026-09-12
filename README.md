@@ -68,10 +68,14 @@ The goal was to change as little as possible. Concretely:
   `Qwen3-VL-2B-Instruct`; two bugs in the original `sft_stage3.sh` are fixed
   (`--stage "avt_v5_stage2"` → `--stage "sft_stage3"`, and a missing `/` in
   `sft_stage1${STAGE1_MODEL}` → `sft_stage1/${STAGE1_MODEL}`) since otherwise the
-  script cannot run at all. All hyperparameters (epochs, batch size, learning rate,
-  latent size, alignment weight, `--nproc-per-node=8`, ...) are left exactly as in the
-  original scripts — Qwen3-VL-2B-Instruct is much smaller than Qwen2.5-VL-7B-Instruct,
-  so fewer GPUs and/or a larger batch size are likely feasible; tune to your hardware.
+  script cannot run at all. All `-m src.main`/`-m src.precompute_*` hyperparameters
+  (epochs, batch size, learning rate, latent size, alignment weight, ...) are left
+  exactly as in the original scripts. The launch mechanics around that command *are*
+  changed: the original single-node `conda activate` + `torchrun --nproc-per-node=8`
+  is replaced with SLURM `sbatch` + `apptainer exec --nv` + a heterogeneous multi-node
+  `torchrun` launch matched to this fork's actual cluster (5 L40S GPUs split 2+3 across
+  two asymmetric nodes) — see [SLURM + apptainer](#slurm--apptainer-multi-node-setup)
+  below for what that involves and why.
 - **`requirements.txt`**: `transformers==4.54.0` → `4.57.1` (Qwen3-VL support was only
   added in `4.57.0`, which PyPI yanked; `4.57.1` is the first usable release) and
   `trl==0.15.2` → `0.24.0` (the closest release declaring `transformers>=4.56.1`).
