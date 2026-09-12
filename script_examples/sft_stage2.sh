@@ -9,7 +9,8 @@
 # heterogeneous split across two nodes as sft_stage1.sh -- see that file's
 # header comment for why a plain `sbatch --nodes=2 --gres=...` can't express
 # an asymmetric 2+3 split, and for the NCCL troubleshooting note if the job
-# hangs at rendezvous.
+# hangs at rendezvous. See cluster_env.sh for the isolated-venv-inside-the-
+# apptainer-container setup this depends on -- run setup_env.sh once first.
 #
 # This was written and reviewed, but NOT run on your cluster (no SLURM/GPU/
 # apptainer access from the environment that produced it).
@@ -32,29 +33,14 @@
 set -euo pipefail
 mkdir -p logs
 
-CONTAINER=/projects/academic/alipour/payamabd/pytorch_ngc_25.02.sif
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APPTAINER_BINDS="--bind /projects/academic/alipour:/projects/academic/alipour"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/cluster_env.sh"
 
 MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST_HET_GROUP_0" | head -n1)
-MASTER_PORT=29502
+RDZV_ENDPOINT="${MASTER_ADDR}:29502"
 
 # export NCCL_SOCKET_IFNAME=ib0
 # export NCCL_DEBUG=INFO
-
-run_group () {
-  # $1 = het-group index, $2 = GPUs on that node, $3 = rdzv id (must match
-  # across both groups of the same phase, and differ between the two phases
-  # below so their rendezvous rounds can't collide), remaining args = the
-  # python -m module + its arguments.
-  local het_group=$1 nproc=$2 rdzv_id=$3
-  shift 3
-  srun --het-group="${het_group}" apptainer exec --nv ${APPTAINER_BINDS} "${CONTAINER}" \
-    torchrun \
-      --nnodes=2 --nproc-per-node="${nproc}" \
-      --rdzv-id="${rdzv_id}" --rdzv-backend=c10d --rdzv-endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
-      "$@"
-}
 
 cd "$REPO_DIR"
 
@@ -80,8 +66,8 @@ PRECOMPUTE_ARGS=(
   --output_hidden_states
   --alignment_layer all_layers
 )
-run_group 0 2 "${SLURM_JOB_ID}_stage2_precompute" "${PRECOMPUTE_ARGS[@]}" &
-run_group 1 3 "${SLURM_JOB_ID}_stage2_precompute" "${PRECOMPUTE_ARGS[@]}" &
+run_group 0 2 "${SLURM_JOB_ID}_stage2_precompute" "${RDZV_ENDPOINT}" "${PRECOMPUTE_ARGS[@]}" &
+run_group 1 3 "${SLURM_JOB_ID}_stage2_precompute" "${RDZV_ENDPOINT}" "${PRECOMPUTE_ARGS[@]}" &
 wait
 
 # ----------------------------------------------------------------------------
@@ -118,6 +104,6 @@ TRAIN_ARGS=(
   --teacher_reps_dir path_to_your_model/Monet_checkpoints/monet_precomputed_observation_token_teacher_reps/${TEACHER}
   --alignment_layer all_layers
 )
-run_group 0 2 "${SLURM_JOB_ID}_stage2_train" "${TRAIN_ARGS[@]}" &
-run_group 1 3 "${SLURM_JOB_ID}_stage2_train" "${TRAIN_ARGS[@]}" &
+run_group 0 2 "${SLURM_JOB_ID}_stage2_train" "${RDZV_ENDPOINT}" "${TRAIN_ARGS[@]}" &
+run_group 1 3 "${SLURM_JOB_ID}_stage2_train" "${RDZV_ENDPOINT}" "${TRAIN_ARGS[@]}" &
 wait

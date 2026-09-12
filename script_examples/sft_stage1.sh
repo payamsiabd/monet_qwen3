@@ -8,8 +8,10 @@
 # A plain (non-heterogeneous) `sbatch --nodes=2 --gres=gpu:...:N` job can only
 # request the SAME N on every node, so it tops out at 2+2=4 GPUs here. Getting
 # the full 2+3=5 requires a SLURM heterogeneous job (the two "#SBATCH hetjob"-
-# separated blocks below), with one `srun --het-group=<i>` launching torchrun
-# on each side, both pointing at the same c10d rendezvous endpoint.
+# separated blocks below), with one `srun --het-group=<i>` launching torch's
+# distributed launcher on each side, both pointing at the same c10d
+# rendezvous endpoint. See cluster_env.sh for the isolated-venv-inside-the-
+# apptainer-container setup this depends on -- run setup_env.sh once first.
 #
 # This was written and reviewed, but NOT run on your cluster (no SLURM/GPU/
 # apptainer access from the environment that produced it). The most likely
@@ -33,17 +35,11 @@
 set -euo pipefail
 mkdir -p logs
 
-CONTAINER=/projects/academic/alipour/payamabd/pytorch_ngc_25.02.sif
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Extend/replace this if your dataset or model live outside $REPO_DIR's parents
-# (the pytorch_ngc container binds $HOME automatically; add more --bind flags
-# below if e.g. Monet-SFT-125K and the Qwen3-VL-2B-Instruct checkpoint live
-# under a different /projects/... path than the .sif itself).
-APPTAINER_BINDS="--bind /projects/academic/alipour:/projects/academic/alipour"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/cluster_env.sh"
 
 MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST_HET_GROUP_0" | head -n1)
-MASTER_PORT=29501
-RDZV_ID="${SLURM_JOB_ID}_stage1"
+RDZV_ENDPOINT="${MASTER_ADDR}:29501"
 
 # If NCCL hangs at rendezvous/init with two nodes (the most common first
 # failure on a new cluster), it's almost always the network interface NCCL
@@ -57,6 +53,7 @@ RDZV_ID="${SLURM_JOB_ID}_stage1"
 CE_EMPHASIZE_FACTOR=2.0
 SAVE_CKPT=sft_stage1_ce${CE_EMPHASIZE_FACTOR}
 TRAIN_ARGS=(
+  -m src.main
   --epochs 4
   --bsz 1
   --grad_accum_steps 16
@@ -76,16 +73,7 @@ TRAIN_ARGS=(
   --ce_emphasize_factor ${CE_EMPHASIZE_FACTOR}
 )
 
-run_group () {
-  local het_group=$1 nproc=$2
-  srun --het-group="${het_group}" apptainer exec --nv ${APPTAINER_BINDS} "${CONTAINER}" \
-    torchrun \
-      --nnodes=2 --nproc-per-node="${nproc}" \
-      --rdzv-id="${RDZV_ID}" --rdzv-backend=c10d --rdzv-endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
-      -m src.main "${TRAIN_ARGS[@]}"
-}
-
 cd "$REPO_DIR"
-run_group 0 2 &
-run_group 1 3 &
+run_group 0 2 "${SLURM_JOB_ID}_stage1" "${RDZV_ENDPOINT}" "${TRAIN_ARGS[@]}" &
+run_group 1 3 "${SLURM_JOB_ID}_stage1" "${RDZV_ENDPOINT}" "${TRAIN_ARGS[@]}" &
 wait
