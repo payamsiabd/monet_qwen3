@@ -1,0 +1,32 @@
+# For use inside an NGC PyTorch apptainer/singularity image (e.g.
+# pytorch_ngc_25.02.sif), which already bundles torch/torchvision built
+# against its own CUDA/driver. Installing requirements.txt as-is inside such
+# a container would let pip pull a mismatched torch/torchvision wheel and
+# potentially break the container's GPU support. Install this file instead:
+#
+#   apptainer exec --nv <path-to-sif> pip install --user -r requirements-container.txt
+#
+# i.e. requirements.txt minus torch and torchvision.
+datasets
+qwen_vl_utils
+mathruler
+pylatexenc
+Pillow
+transformers==4.57.1
+trl==0.24.0
+tqdm
+safetensors
+accelerate
+deepspeed
+ray
+einops
+sentencepiece
+requests
+numpy
+scipy
+opencv-python-headless
+fastapi
+uvicorn
+pydantic
+modelscope
+wandb
