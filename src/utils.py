@@ -299,7 +299,7 @@ def generate_labels_after_multi_token_start_only_allow(
 def resize_by_token_budget(images,
                            global_max_pixels=2000*28*28,
                            per_img_max_pixels=1280*28*28,
-                           divisor=28):
+                           *, divisor):
     '''Resuze images to fit within a global token budget and per-image token budget.'''
     total = sum(img.width * img.height for img in images)
     if total <= global_max_pixels:
@@ -323,11 +323,11 @@ def resize_by_token_budget(images,
         new_sizes.append((w, h))
     return processed, new_sizes
 
-def resize_diff(images, 
-                question_img_max_pixels=1280*28*28,#2000*28*28, 
+def resize_diff(images,
+                question_img_max_pixels=1280*28*28,#2000*28*28,
                 remain_global_max_pixels=800*28*28,#800*3*28*28,
                 remain_per_img_max_pixels=800*28*28,#1280*28*28,
-                divisor=28):
+                *, divisor):
     processed = []
     new_sizes = []
     question_img_processed, question_img_new_sizes = resize_by_token_budget(
