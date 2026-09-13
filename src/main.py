@@ -159,7 +159,7 @@ def collate_fn_sft_stage1(examples):
     elif args.image_resize == "clear_question_img":
         image_inputs, new_sizes = resize_diff(image_inputs, question_img_max_pixels=1280*patch_factor*patch_factor, remain_global_max_pixels=800*patch_factor*patch_factor, remain_per_img_max_pixels=800*patch_factor*patch_factor, divisor=patch_factor) # resize_by_token_budget(image_inputs)
     teacher_texts = texts
-    teacher_batch = processor(text=teacher_texts, images=image_inputs, return_tensors="pt", padding=True)
+    teacher_batch = processor(text=teacher_texts, images=image_inputs, return_tensors="pt", padding=True, do_resize=False)
     total_image_pads = 0
     for txt in texts:
         total_image_pads += txt.count("<|image_pad|>")
@@ -209,7 +209,7 @@ def collate_fn_sft_stage2(examples):
     for txt in texts:
         total_image_pads += txt.count("<|vision_start|><|image_pad|>")
     assert total_image_pads == len(image_inputs)
-    batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+    batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True, do_resize=False)
     batch['metadata'] = metadata
     if not args.not_use_4d:
         attn_mask_4d, _ = build_4d_attn(
@@ -283,7 +283,7 @@ def collate_fn_sft_stage3(examples, alignment="boxed_start"):
                 resize_ptr += batch_assistant_img_cnts[b_ptr] # user_image_inputs only contain question images of each batch sample, so we need to skip the helper images in the new_sizes by adding batch_assistant_img_cnts[i]
                 b_ptr += 1
                 usr_img_cnt_accum = 0
-    student_batch = processor(text=student_texts, images=user_image_inputs, return_tensors="pt", padding=True)
+    student_batch = processor(text=student_texts, images=user_image_inputs, return_tensors="pt", padding=True, do_resize=False)
     total_image_pads = 0
     for txt in student_texts:
         total_image_pads += txt.count("<|image_pad|>")

@@ -74,20 +74,28 @@ The goal was to change as little as possible. Concretely:
     arg) so any future caller that forgets to pass it fails loudly instead of silently
     inheriting the wrong value — every current call site already passes it explicitly,
     so this is a no-op for existing behavior.
-    This does **not** silently misalign the vision patches even before this fix —
-    `processor(images=..., do_resize=True)` (the default; Monet never disables it) is
-    the final, authoritative resize before patchifying, and it's built from the real
-    checkpoint's config, so it always snaps to the correct 32-pixel grid regardless of
-    what the earlier `process_vision_info`/`resize_by_token_budget` passes did. What the
-    "28" throughout *did* get wrong was precision: the intermediate token-budget
-    resizing was snapping to a 28-pixel grid and sizing against a "1 token = 28×28
-    pixels" assumption that isn't Qwen3-VL's, so the actual number of image tokens
-    produced for a given `--sft_stageN_*_img_tokens` budget was somewhat off from what
-    was asked for. `do_resize` is deliberately left at its default (`True`) rather than
-    disabled — the processor's own resize is a real correctness safety net, and I did
-    not have a checkpoint on hand to verify Monet's own resize path always lands on an
-    exact patch/merge-size multiple in every code path (the way `do_resize=False` would
-    require).
+  - **`do_resize=False` on every `processor(...)` call.** All five call sites
+    (`main.py`'s three `collate_fn_sft_stage{1,2,3}`, `precompute_teacher_reps.py`,
+    `precompute_teacher_latents.py`) now pass `do_resize=False` to the final
+    `processor(text=..., images=image_inputs, ...)` call. This matches Qwen's own
+    official Qwen3-VL preprocessing guidance: once `process_vision_info(...,
+    image_patch_size=...)` has resized the images (which it always does — it's not
+    optional pass-through), the processor must be told not to resize them again, or
+    it silently re-resizes. This isn't just a precision nit: `transformers`'
+    `Qwen2VLImageProcessor._preprocess` (which `Qwen3VLProcessor` reuses), when
+    `do_resize=True` (the old default here), recomputes `smart_resize(...,
+    min_pixels=size["shortest_edge"], max_pixels=size["longest_edge"])` from the
+    *checkpoint's own* `preprocessor_config.json` — completely ignoring the
+    dimensions `process_vision_info`/`resize_by_token_budget`/`resize_diff` just
+    computed. With the old default, Stage 2/3's `--sft_stageN_*_img_tokens` budgets
+    were silently overridden by whatever `shortest_edge`/`longest_edge` the checkpoint
+    ships with, rather than actually controlling image size as intended. Disabling
+    `do_resize` is safe now (it wasn't a free change before the patch_size fix above):
+    `resize_by_token_budget`/`resize_diff` explicitly snap every dimension to an exact
+    multiple of `divisor` (`patch_factor`, 32 for Qwen3-VL), so the images handed to
+    `processor(...)` already sit on the correct patch/merge-size grid the vision
+    encoder needs — there's no remaining case where skipping the processor's resize
+    could hand it a misaligned image.
 - **`src/task.py`, `src/trainer.py`**: byte-for-byte unchanged — the data preprocessing
   and the three `CustomTrainerSFT_STAGE{1,2,3}` loss computations are
   architecture-agnostic (they only touch `input_ids`/tensors and the model's

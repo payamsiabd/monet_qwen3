@@ -145,7 +145,7 @@ def collate_fn_precompute_teacher_latents(examples):
     for txt in texts:
         total_image_pads += txt.count("<|vision_start|><|image_pad|>")
     assert total_image_pads == len(image_inputs)
-    batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+    batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True, do_resize=False)
 
     if not args.not_use_4d:
         attn_mask_4d, batch['segs'] = build_4d_attn(
