@@ -138,7 +138,7 @@ def collate_fn_precompute_teacher_rep(examples, alignment="boxed_start"):
     elif args.image_resize == "clear_question":
         image_inputs, new_sizes = resize_diff(image_inputs, question_img_max_pixels=1280*patch_factor*patch_factor, remain_global_max_pixels=800*patch_factor*patch_factor, remain_per_img_max_pixels=800*patch_factor*patch_factor, divisor=patch_factor) # resize_by_token_budget(image_inputs)
     teacher_texts = texts
-    teacher_batch = processor(text=teacher_texts, images=image_inputs, return_tensors="pt", padding=True)
+    teacher_batch = processor(text=teacher_texts, images=image_inputs, return_tensors="pt", padding=True, do_resize=False)
     total_image_pads = 0
     for txt in texts:
         total_image_pads += txt.count("<|image_pad|>")
