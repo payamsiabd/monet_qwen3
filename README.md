@@ -52,13 +52,39 @@ The goal was to change as little as possible. Concretely:
   `apply_qwen2_5_monet.py`'s `sys.modules` swap, targeting
   `transformers.models.qwen3_vl.modeling_qwen3_vl` instead.
 - **`src/main.py`, `src/precompute_teacher_reps.py`, `src/precompute_teacher_latents.py`**:
-  only the model imports changed (`Qwen2_5_VLForConditionalGeneration`/`Qwen2_5_VLConfig`
-  → `Qwen3VLForConditionalGeneration`/`Qwen3VLConfig`, `apply_qwen2_5_monet` →
+  model imports changed (`Qwen2_5_VLForConditionalGeneration`/`Qwen2_5_VLConfig` →
+  `Qwen3VLForConditionalGeneration`/`Qwen3VLConfig`, `apply_qwen2_5_monet` →
   `apply_qwen3_vl_monet`). `main.py` additionally resizes the token embedding table if
   the 5 tokens Monet adds (`<abs_vis_token>`, `<abs_vis_token_pad>`, `</abs_vis_token>`,
   `<observation>`, `</observation>`) don't fit in Qwen3-VL's tokenizer — the original
   repo didn't need this because Qwen2.5-VL-7B-Instruct's tokenizer happens to have
   enough reserved slots; the resize is a no-op if Qwen3-VL's does too.
+  - **Vision patch size.** Qwen2.5-VL's patch_size is 14 (merge_size 2, so 14×2=28
+    pixels/image-token); Qwen3-VL's is 16 (16×2=32). The original repo hardcodes `28`
+    throughout for this: as `qwen_vl_utils.process_vision_info`'s `image_patch_size`
+    (whose own default is *also* 14) and as the `divisor` / implicit pixels-per-token
+    unit in `resize_by_token_budget`/`resize_diff` (`src/utils.py`, still unchanged —
+    only the values callers pass to its `divisor`/`*_max_pixels` parameters moved). All
+    three scripts now compute `patch_factor = processor.image_processor.patch_size *
+    processor.image_processor.merge_size` once after loading the processor (reading
+    the real, checkpoint-specific value rather than assuming 14 or hardcoding 16) and
+    pass it through everywhere `28` used to appear, preserving the original *token*
+    budgets (e.g. still "2000 image tokens" for Stage 1) while fixing the pixels-per-
+    token conversion.
+    This does **not** silently misalign the vision patches even before this fix —
+    `processor(images=..., do_resize=True)` (the default; Monet never disables it) is
+    the final, authoritative resize before patchifying, and it's built from the real
+    checkpoint's config, so it always snaps to the correct 32-pixel grid regardless of
+    what the earlier `process_vision_info`/`resize_by_token_budget` passes did. What the
+    "28" throughout *did* get wrong was precision: the intermediate token-budget
+    resizing was snapping to a 28-pixel grid and sizing against a "1 token = 28×28
+    pixels" assumption that isn't Qwen3-VL's, so the actual number of image tokens
+    produced for a given `--sft_stageN_*_img_tokens` budget was somewhat off from what
+    was asked for. `do_resize` is deliberately left at its default (`True`) rather than
+    disabled — the processor's own resize is a real correctness safety net, and I did
+    not have a checkpoint on hand to verify Monet's own resize path always lands on an
+    exact patch/merge-size multiple in every code path (the way `do_resize=False` would
+    require).
 - **`src/task.py`, `src/trainer.py`, `src/utils.py`**: byte-for-byte unchanged. All the
   data preprocessing, the 4D controlled-attention mask construction, and the three
   `CustomTrainerSFT_STAGE{1,2,3}` loss computations are architecture-agnostic (they only
