@@ -48,9 +48,16 @@ logging.info('=='*20)
 
 # Load the model and processor
 
-patch=14 # processor.image_processor.patch_size
 # Use slow processor to avoid fast-processor info spam and behavioral drift
 processor = AutoProcessor.from_pretrained(args.load_model_path, use_fast=True, trust_remote_code=True)
+
+# Qwen3-VL's vision patch_size (16) differs from Qwen2.5-VL's (14): the original
+# Monet repo hardcodes "28" (=14*2, patch_size*merge_size) throughout as the
+# pixels-per-image-token unit for qwen_vl_utils.process_vision_info's
+# image_patch_size and for the *_by_token_budget resize helpers' divisor/pixel
+# budgets below. Derive it from the loaded processor instead so it's correct
+# for whatever model is actually loaded.
+patch_factor = processor.image_processor.patch_size * processor.image_processor.merge_size
 
 if _rank == 0:
     # Rewrite deprecated preprocessor.json into video_preprocessor.json by re-saving once
@@ -146,11 +153,11 @@ def collate_fn_sft_stage1(examples):
     ################################################
     # teacher
     ################################################
-    image_inputs, _ = process_vision_info(examples)
+    image_inputs, _ = process_vision_info(examples, image_patch_size=processor.image_processor.patch_size)
     if args.image_resize == "global":
-        image_inputs, new_sizes = resize_by_token_budget(image_inputs)
+        image_inputs, new_sizes = resize_by_token_budget(image_inputs, global_max_pixels=2000*patch_factor*patch_factor, per_img_max_pixels=1280*patch_factor*patch_factor, divisor=patch_factor)
     elif args.image_resize == "clear_question_img":
-        image_inputs, new_sizes = resize_diff(image_inputs) # resize_by_token_budget(image_inputs)
+        image_inputs, new_sizes = resize_diff(image_inputs, question_img_max_pixels=1280*patch_factor*patch_factor, remain_global_max_pixels=800*patch_factor*patch_factor, remain_per_img_max_pixels=800*patch_factor*patch_factor, divisor=patch_factor) # resize_by_token_budget(image_inputs)
     teacher_texts = texts
     teacher_batch = processor(text=teacher_texts, images=image_inputs, return_tensors="pt", padding=True)
     total_image_pads = 0
@@ -192,11 +199,11 @@ def collate_fn_sft_stage2(examples):
     # add `<abs_vis_token><abs_vis_token_pad>...</abs_vis_token>` after each `<|vision_start|><|image_pad|><|vision_end|>` for each `<|im_start|>assistant` content
     texts = add_latent_pad_after_auxiliary_img(texts, args.latent_size, "<abs_vis_token_pad>")
 
-    image_inputs, _ = process_vision_info(examples)
+    image_inputs, _ = process_vision_info(examples, image_patch_size=processor.image_processor.patch_size)
     if args.image_resize == "global":
-        image_inputs, new_sizes = resize_by_token_budget(image_inputs, global_max_pixels=args.sft_stage2_global_img_tokens*28*28, per_img_max_pixels=args.sft_stage2_per_img_tokens*28*28)
+        image_inputs, new_sizes = resize_by_token_budget(image_inputs, global_max_pixels=args.sft_stage2_global_img_tokens*patch_factor*patch_factor, per_img_max_pixels=args.sft_stage2_per_img_tokens*patch_factor*patch_factor, divisor=patch_factor)
     elif args.image_resize == "clear_question_img":
-        image_inputs, new_sizes = resize_diff(image_inputs)
+        image_inputs, new_sizes = resize_diff(image_inputs, question_img_max_pixels=1280*patch_factor*patch_factor, remain_global_max_pixels=800*patch_factor*patch_factor, remain_per_img_max_pixels=800*patch_factor*patch_factor, divisor=patch_factor)
 
     total_image_pads = 0
     for txt in texts:
@@ -253,8 +260,8 @@ def collate_fn_sft_stage3(examples, alignment="boxed_start"):
 
     # replace <abs_vis_token></abs_vis_token> with <|vision_start|><|image_pad|><|vision_end|> for each <|im_start|>assistant content
     texts = [replace_latent_placeholder_with_img_pad(text) for text in texts]
-    image_inputs, _ = process_vision_info(examples)
-    image_inputs, new_sizes = resize_by_token_budget(image_inputs, global_max_pixels=args.sft_stage3_img_tokens*28*28, per_img_max_pixels=args.sft_stage3_img_tokens*28*28,)
+    image_inputs, _ = process_vision_info(examples, image_patch_size=processor.image_processor.patch_size)
+    image_inputs, new_sizes = resize_by_token_budget(image_inputs, global_max_pixels=args.sft_stage3_img_tokens*patch_factor*patch_factor, per_img_max_pixels=args.sft_stage3_img_tokens*patch_factor*patch_factor, divisor=patch_factor)
 
     ################################################
     # student
@@ -262,7 +269,7 @@ def collate_fn_sft_stage3(examples, alignment="boxed_start"):
     # replace <|vision_start|><|image_pad|><|vision_end|> with <abs_vis_token><abs_vis_token_pad>...</abs_vis_token> for each <|im_start|>assistant content
     student_texts = replace_img_pad_with_latent_pad(texts, args.latent_size, "<abs_vis_token_pad>")
     user_examples = remove_auxiliary_images(examples)
-    user_image_inputs, _ = process_vision_info(user_examples)
+    user_image_inputs, _ = process_vision_info(user_examples, image_patch_size=processor.image_processor.patch_size)
     resize_ptr = 0
     b_ptr = 0
     usr_img_cnt_accum = 0

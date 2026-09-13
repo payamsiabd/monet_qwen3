@@ -39,6 +39,14 @@ model = Qwen3VLForConditionalGeneration.from_pretrained(
 )
 processor = AutoProcessor.from_pretrained(args.load_model_path, use_fast=False)
 
+# Qwen3-VL's vision patch_size (16) differs from Qwen2.5-VL's (14): the original
+# Monet repo hardcodes "28" (=14*2, patch_size*merge_size) throughout as the
+# pixels-per-image-token unit for qwen_vl_utils.process_vision_info's
+# image_patch_size and for the *_by_token_budget resize helpers' divisor/pixel
+# budgets below. Derive it from the loaded processor instead so it's correct
+# for whatever model is actually loaded.
+patch_factor = processor.image_processor.patch_size * processor.image_processor.merge_size
+
 preprocess_function = task_preporcess_config[args.task]
 all_train_dataset = []
 for data_path in args.data_path:
@@ -124,11 +132,11 @@ def collate_fn_precompute_teacher_rep(examples, alignment="boxed_start"):
     ################################################
     # teacher
     ################################################
-    image_inputs, _ = process_vision_info(examples)
+    image_inputs, _ = process_vision_info(examples, image_patch_size=processor.image_processor.patch_size)
     if args.image_resize == "global":
-        image_inputs, new_sizes = resize_by_token_budget(image_inputs)
+        image_inputs, new_sizes = resize_by_token_budget(image_inputs, global_max_pixels=2000*patch_factor*patch_factor, per_img_max_pixels=1280*patch_factor*patch_factor, divisor=patch_factor)
     elif args.image_resize == "clear_question":
-        image_inputs, new_sizes = resize_diff(image_inputs) # resize_by_token_budget(image_inputs)
+        image_inputs, new_sizes = resize_diff(image_inputs, question_img_max_pixels=1280*patch_factor*patch_factor, remain_global_max_pixels=800*patch_factor*patch_factor, remain_per_img_max_pixels=800*patch_factor*patch_factor, divisor=patch_factor) # resize_by_token_budget(image_inputs)
     teacher_texts = texts
     teacher_batch = processor(text=teacher_texts, images=image_inputs, return_tensors="pt", padding=True)
     total_image_pads = 0
