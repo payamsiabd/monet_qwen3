@@ -63,14 +63,17 @@ The goal was to change as little as possible. Concretely:
     pixels/image-token); Qwen3-VL's is 16 (16×2=32). The original repo hardcodes `28`
     throughout for this: as `qwen_vl_utils.process_vision_info`'s `image_patch_size`
     (whose own default is *also* 14) and as the `divisor` / implicit pixels-per-token
-    unit in `resize_by_token_budget`/`resize_diff` (`src/utils.py`, still unchanged —
-    only the values callers pass to its `divisor`/`*_max_pixels` parameters moved). All
-    three scripts now compute `patch_factor = processor.image_processor.patch_size *
+    unit in `resize_by_token_budget`/`resize_diff` (`src/utils.py`). All three scripts
+    now compute `patch_factor = processor.image_processor.patch_size *
     processor.image_processor.merge_size` once after loading the processor (reading
     the real, checkpoint-specific value rather than assuming 14 or hardcoding 16) and
     pass it through everywhere `28` used to appear, preserving the original *token*
     budgets (e.g. still "2000 image tokens" for Stage 1) while fixing the pixels-per-
-    token conversion.
+    token conversion. `resize_by_token_budget`/`resize_diff` also had their `divisor`
+    parameter's Qwen2.5-specific `=28` default removed (now a required keyword-only
+    arg) so any future caller that forgets to pass it fails loudly instead of silently
+    inheriting the wrong value — every current call site already passes it explicitly,
+    so this is a no-op for existing behavior.
     This does **not** silently misalign the vision patches even before this fix —
     `processor(images=..., do_resize=True)` (the default; Monet never disables it) is
     the final, authoritative resize before patchifying, and it's built from the real
@@ -85,11 +88,13 @@ The goal was to change as little as possible. Concretely:
     not have a checkpoint on hand to verify Monet's own resize path always lands on an
     exact patch/merge-size multiple in every code path (the way `do_resize=False` would
     require).
-- **`src/task.py`, `src/trainer.py`, `src/utils.py`**: byte-for-byte unchanged. All the
-  data preprocessing, the 4D controlled-attention mask construction, and the three
-  `CustomTrainerSFT_STAGE{1,2,3}` loss computations are architecture-agnostic (they only
-  touch `input_ids`/tensors and the model's `forward(...)` kwargs contract), so nothing
-  here needed to change.
+- **`src/task.py`, `src/trainer.py`**: byte-for-byte unchanged — the data preprocessing
+  and the three `CustomTrainerSFT_STAGE{1,2,3}` loss computations are
+  architecture-agnostic (they only touch `input_ids`/tensors and the model's
+  `forward(...)` kwargs contract), so nothing here needed to change. **`src/utils.py`**:
+  unchanged except making `resize_by_token_budget`/`resize_diff`'s `divisor` parameter
+  required (see above) — the 4D controlled-attention mask construction and other
+  helpers are otherwise untouched.
 - **`script_examples/sft_stage{1,2,3}.sh`**: `--load_model_path` now points at
   `Qwen3-VL-2B-Instruct`; two bugs in the original `sft_stage3.sh` are fixed
   (`--stage "avt_v5_stage2"` → `--stage "sft_stage3"`, and a missing `/` in
